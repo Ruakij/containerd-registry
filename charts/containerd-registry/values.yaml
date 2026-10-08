@@ -1,0 +1,39 @@
+image:
+  repository: ghcr.io/ruakij/containerd-registry
+  tag: "" # defaults to the chart appVersion
+  pullPolicy: IfNotPresent
+
+# config.yml of the registry: zot format for http, proxy in the containerd/k3s
+# model; see the README. storage.containerd.address is set from containerdSocket.
+config:
+  distSpecVersion: 1.1.1
+  http:
+    address: 0.0.0.0
+    port: "5000"
+  proxy:
+    default: docker.io
+    registries:
+      docker.io: {}
+
+# containerd socket on the node.
+# k3s and RKE2: /run/k3s/containerd/containerd.sock
+containerdSocket: /run/containerd/containerd.sock
+
+service:
+  port: 5000
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 128Mi
+
+tolerations: []
+nodeSelector: {}
+affinity: {}
+priorityClassName: ""
+updateStrategy:
+  type: RollingUpdate
+podLabels: {}
+podAnnotations: {}

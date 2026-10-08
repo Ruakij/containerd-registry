@@ -1,0 +1,7 @@
+{{ include "containerd-registry.fullname" . }} serves the registry on each node at
+http://{{ include "containerd-registry.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
+{{- if eq .Values.containerdSocket "/run/containerd/containerd.sock" }}
+
+containerdSocket is the default /run/containerd/containerd.sock. On k3s or RKE2 it
+is /run/k3s/containerd/containerd.sock; with the wrong one the pods do not start.
+{{- end }}

@@ -1,0 +1,99 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # A CVE published after a merge is still our problem, so rescan daily.
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A push supersedes the run of the commit before it, so drop that one instead of
+# waiting for a verdict on code nobody has any more.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: gofmt -l cmd | tee /dev/stderr | (! read)
+      - run: go mod tidy -diff
+      - run: go vet ./...
+      - run: go test -race ./...
+      - run: make build
+      # Read from a plain file so it can be bumped without a token carrying the
+      # workflow scope.
+      - id: lint-version
+        run: echo "version=$(cat hack/golangci-lint.version)" >> "$GITHUB_OUTPUT"
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: ${{ steps.lint-version.outputs.version }}
+
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: azure/setup-helm@v5
+      - run: helm lint charts/containerd-registry
+      - run: helm template ci charts/containerd-registry --set auth.htpasswd.existingSecret=htpasswd > /dev/null
+      - uses: helm/chart-testing-action@v2
+      # The released chart version comes from the git tag, not Chart.yaml, so
+      # demanding a version bump per chart change would be asking for a no-op edit.
+      - run: ct lint --target-branch ${{ github.event.repository.default_branch }} --chart-dirs charts --check-version-increment=false
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Reachability-aware, so it only fails on vulnerabilities we actually call.
+      # It installs its own Go, hence no setup-go step; go-version-input must be
+      # cleared or it collides with go-version-file.
+      - uses: golang/govulncheck-action@v1.1.0
+        with:
+          repo-checkout: false
+          go-version-file: go.mod
+          go-version-input: ""
+      # Misconfig scanning is off: the registry runs as root with the containerd
+      # socket hostPath-mounted by design, and every hit would be a waiver.
+      - uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          load: true
+          tags: containerd-registry:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: containerd-registry:ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH

@@ -1,0 +1,12 @@
+{{- $config := deepCopy .Values.config -}}
+{{- $_ := mustMergeOverwrite $config (dict "storage" (dict "containerd" (dict "address" .Values.containerdSocket))) -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "containerd-registry.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "containerd-registry.labels" . | nindent 4 }}
+data:
+  config.yml: |
+    {{- toYaml $config | nindent 4 }}

@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "containerd-registry.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "containerd-registry.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "containerd-registry.selectorLabels" . | nindent 6 }}
+  updateStrategy:
+    {{- toYaml .Values.updateStrategy | nindent 4 }}
+  template:
+    metadata:
+      labels:
+        {{- include "containerd-registry.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        # The config is read at startup only.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: registry
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - -config=/etc/containerd-registry/config.yml
+          ports:
+            - name: http
+              containerPort: {{ .Values.config.http.port | int }}
+          securityContext:
+            # The containerd socket is owned by root, and connecting as its
+            # owner needs no capabilities.
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/containerd-registry/config.yml
+              subPath: config.yml
+              readOnly: true
+            # The directory, not the socket: a file bind mount stays on the inode
+            # of the socket containerd had when the pod started, and every
+            # containerd restart replaces it.
+            - name: containerd
+              mountPath: {{ dir .Values.containerdSocket }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "containerd-registry.fullname" . }}
+        - name: containerd
+          hostPath:
+            path: {{ dir .Values.containerdSocket }}
+            type: Directory
