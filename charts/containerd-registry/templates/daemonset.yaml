@@ -50,6 +50,14 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.config.http.port | int }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
           securityContext:
             # The containerd socket is owned by root, and connecting as its
             # owner needs no capabilities.
