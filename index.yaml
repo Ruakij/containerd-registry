@@ -1,3 +1,33 @@
 apiVersion: v1
-entries: {}
-generated: "1970-01-01T00:00:00Z"
+entries:
+  containerd-registry:
+  - annotations:
+      artifacthub.io/category: integration-delivery
+      artifacthub.io/license: Apache-2.0
+      artifacthub.io/operator: "false"
+      artifacthub.io/prerelease: "false"
+    apiVersion: v2
+    appVersion: 0.1.0
+    created: "2026-10-09T11:03:54.426945441Z"
+    description: OCI registry backed by the containerd of each node, pulling through
+      containerd
+    digest: 454e1e5f8750f928458745b13fbf837c982e5ae3e7534051d28650cbd0d31ec5
+    home: https://github.com/Ruakij/containerd-registry
+    keywords:
+    - containerd
+    - registry
+    - oci
+    - mirror
+    - pull-through
+    kubeVersion: '>=1.26.0-0'
+    maintainers:
+    - name: Ruakij
+      url: https://github.com/Ruakij
+    name: containerd-registry
+    sources:
+    - https://github.com/Ruakij/containerd-registry
+    type: application
+    urls:
+    - https://github.com/Ruakij/containerd-registry/releases/download/v0.1.0/containerd-registry-0.1.0.tgz
+    version: 0.1.0
+generated: "2026-10-09T11:03:54.426361747Z"
