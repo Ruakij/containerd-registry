@@ -1,7 +1,7 @@
 # containerd-registry
 
 [![Helm](https://img.shields.io/badge/dynamic/yaml?url=https%3A%2F%2Fruakij.github.io%2Fcontainerd-registry%2Findex.yaml&query=%24.entries%5B%27containerd-registry%27%5D%5B0%5D.version&label=Helm&logo=helm&color=0F1689&prefix=v)](#install)
-[![containerd](https://img.shields.io/badge/containerd-CRI-575757?logo=containerd&logoColor=white)](#requirements)
+[![containerd](https://img.shields.io/badge/containerd-CRI-0A7BBB?logo=containerd&logoColor=white)](#requirements)
 
 **A pull-through registry whose storage is the containerd of its node.**
 
