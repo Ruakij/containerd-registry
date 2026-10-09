@@ -12,6 +12,7 @@ config:
     port: "5000"
   proxy:
     default: docker.io
+    notFoundTTL: 10s
     registries:
       docker.io: {}
 

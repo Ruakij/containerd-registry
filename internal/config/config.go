@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"sigs.k8s.io/yaml"
 )
@@ -38,6 +39,25 @@ type TLS struct {
 type Proxy struct {
 	Default    string              `json:"default"`
 	Registries map[string]Registry `json:"registries"`
+	// NotFoundTTL is how long a ref upstream does not have answers not found
+	// without another pull; 0 disables it.
+	NotFoundTTL Duration `json:"notFoundTTL"`
+}
+
+// Duration is a time.Duration written as a Go duration string, such as "10s".
+type Duration time.Duration
+
+func (d *Duration) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return fmt.Errorf("duration %s is not a string such as \"10s\"", data)
+	}
+	v, err := time.ParseDuration(s)
+	if err != nil {
+		return err
+	}
+	*d = Duration(v)
+	return nil
 }
 
 type Registry struct{}
@@ -61,7 +81,8 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	var c Config
+	// Set before decoding, as 0 is a valid value that setDefaults cannot tell from unset.
+	c := Config{Proxy: Proxy{NotFoundTTL: Duration(10 * time.Second)}}
 	dec := json.NewDecoder(bytes.NewReader(js))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&c); err != nil {
@@ -102,6 +123,9 @@ func (c *Config) validate() error {
 		if host == "" || strings.Contains(host, "/") {
 			return fmt.Errorf("proxy.registries: key %q is not a host name", host)
 		}
+	}
+	if c.Proxy.NotFoundTTL < 0 {
+		return fmt.Errorf("proxy.notFoundTTL: %v is negative", time.Duration(c.Proxy.NotFoundTTL))
 	}
 	if d := c.Proxy.Default; d != "" {
 		if _, ok := c.Proxy.Registries[d]; !ok {

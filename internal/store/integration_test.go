@@ -17,7 +17,7 @@ import (
 
 func TestBusybox(t *testing.T) {
 	ctx := context.Background()
-	s, err := New(ctx, os.Getenv("CONTAINERD_ADDRESS"))
+	s, err := New(ctx, os.Getenv("CONTAINERD_ADDRESS"), 10*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}

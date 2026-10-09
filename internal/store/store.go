@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/containerd/containerd/v2/client"
@@ -37,16 +38,31 @@ const maxManifestSize = 4 << 20
 // ErrNotFound means the manifest or blob exists neither in containerd nor upstream.
 var ErrNotFound = errors.New("not found")
 
+// maxRemembered bounds the not-found and attestation memories.
+const maxRemembered = 10000
+
 // Store is the containerd backend.
 type Store struct {
 	client *client.Client
 	cri    runtime.ImageServiceClient
 	pulls  singleflight.Group
+	// pull is criPull, replaced in tests.
+	pull        func(ctx context.Context, ref string) error
+	notFoundTTL time.Duration
+
+	mu sync.Mutex
+	// notFound maps repo:tag and repo@digest refs whose pull found nothing to
+	// the time until they answer not found without another pull.
+	notFound map[string]time.Time
+	// attestations holds the attestation manifest digests of served indexes,
+	// which CRI fetches but cannot unpack.
+	attestations map[digest.Digest]struct{}
 }
 
 // New connects to the containerd socket at address, which serves both the
-// containerd and the CRI API.
-func New(ctx context.Context, address string) (*Store, error) {
+// containerd and the CRI API. A ref whose pull found nothing answers not
+// found without another pull for notFoundTTL.
+func New(ctx context.Context, address string, notFoundTTL time.Duration) (*Store, error) {
 	c, err := client.New(address, client.WithDefaultNamespace(namespace))
 	if err != nil {
 		return nil, fmt.Errorf("connect to containerd at %s: %w", address, err)
@@ -61,7 +77,9 @@ func New(ctx context.Context, address string) (*Store, error) {
 		c.Close()
 		return nil, fmt.Errorf("CRI image service at %s: %w", address, err)
 	}
-	return &Store{client: c, cri: cri}, nil
+	s := &Store{client: c, cri: cri, notFoundTTL: notFoundTTL}
+	s.pull = s.criPull
+	return s, nil
 }
 
 // Close closes the containerd connection.
@@ -82,23 +100,102 @@ func (s *Store) Manifest(ctx context.Context, repo, ref string) (ocispec.Descrip
 		}
 		return img.Target, nil
 	}
+	var dgst digest.Digest
 	if strings.Contains(ref, ":") {
-		dgst, err := digest.Parse(ref)
-		if err != nil {
+		var err error
+		if dgst, err = digest.Parse(ref); err != nil {
 			return ocispec.Descriptor{}, nil, fmt.Errorf("%w: %w", ErrNotFound, err)
 		}
 		name = repo + "@" + ref
 		lookup = func() (ocispec.Descriptor, error) { return ocispec.Descriptor{Digest: dgst}, nil }
 	}
+	return s.manifest(ctx, name, dgst, func() (ocispec.Descriptor, []byte, error) { return s.read(ctx, lookup) })
+}
 
-	desc, data, err := s.read(ctx, lookup)
-	if !errors.Is(err, ErrNotFound) {
-		return desc, data, err
+// manifest serves name, with dgst set for a digest ref, from read, pulling
+// it on a miss unless it is a known attestation manifest or upstream lacked
+// it within notFoundTTL. The local read runs first, so an image pulled
+// meanwhile by the kubelet is served.
+func (s *Store) manifest(ctx context.Context, name string, dgst digest.Digest, read func() (ocispec.Descriptor, []byte, error)) (ocispec.Descriptor, []byte, error) {
+	desc, data, err := read()
+	if errors.Is(err, ErrNotFound) {
+		if why := s.skipPull(name, dgst); why != "" {
+			return ocispec.Descriptor{}, nil, fmt.Errorf("%w: %s %s", ErrNotFound, name, why)
+		}
+		if err := s.pull(ctx, name); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				s.rememberNotFound(name)
+			}
+			return ocispec.Descriptor{}, nil, err
+		}
+		desc, data, err = read()
 	}
-	if err := s.pull(ctx, name); err != nil {
-		return ocispec.Descriptor{}, nil, err
+	if err == nil {
+		s.rememberAttestations(desc.MediaType, data)
 	}
-	return s.read(ctx, lookup)
+	return desc, data, err
+}
+
+// skipPull says why name is not worth a pull, or "" when it is.
+func (s *Store) skipPull(name string, dgst digest.Digest) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.attestations[dgst]; ok && dgst != "" {
+		return "is an attestation manifest"
+	}
+	if until, ok := s.notFound[name]; ok {
+		if time.Now().Before(until) {
+			return "was not found upstream recently"
+		}
+		delete(s.notFound, name)
+	}
+	return ""
+}
+
+func (s *Store) rememberNotFound(name string) {
+	if s.notFoundTTL <= 0 {
+		return
+	}
+	now := time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.notFound == nil {
+		s.notFound = map[string]time.Time{}
+	}
+	if len(s.notFound) >= maxRemembered {
+		for n, until := range s.notFound {
+			if !now.Before(until) {
+				delete(s.notFound, n)
+			}
+		}
+	}
+	s.notFound[name] = now.Add(s.notFoundTTL)
+}
+
+// rememberAttestations records the attestation manifests listed in data when
+// it is an index. docker clients request them by digest, and a CRI pull of
+// one fails to unpack after fetching it and leaves a dangling image record.
+func (s *Store) rememberAttestations(mediaType string, data []byte) {
+	if mediaType != ocispec.MediaTypeImageIndex && mediaType != "application/vnd.docker.distribution.manifest.list.v2+json" {
+		return
+	}
+	var index ocispec.Index
+	if err := json.Unmarshal(data, &index); err != nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, m := range index.Manifests {
+		if m.Annotations["vnd.docker.reference.type"] != "attestation-manifest" &&
+			(m.Platform == nil || m.Platform.OS != "unknown" || m.Platform.Architecture != "unknown") {
+			continue
+		}
+		// ponytail: cleared at maxRemembered digests, an LRU if refetching attestations after a clear ever shows up
+		if s.attestations == nil || len(s.attestations) >= maxRemembered {
+			s.attestations = map[digest.Digest]struct{}{}
+		}
+		s.attestations[m.Digest] = struct{}{}
+	}
 }
 
 func (s *Store) read(ctx context.Context, lookup func() (ocispec.Descriptor, error)) (ocispec.Descriptor, []byte, error) {
@@ -152,11 +249,11 @@ func mediaType(data []byte) string {
 	return ocispec.MediaTypeImageManifest
 }
 
-// pull pulls ref through CRI, so the node registry config applies and the
+// criPull pulls ref through CRI, so the node registry config applies and the
 // image is unpacked and labelled like a kubelet pull. Concurrent requests for
 // the same ref share one pull; a caller that gives up leaves it running for
 // the others, bounded by the CRI pull progress timeout of containerd.
-func (s *Store) pull(ctx context.Context, ref string) error {
+func (s *Store) criPull(ctx context.Context, ref string) error {
 	ch := s.pulls.DoChan(ref, func() (any, error) {
 		start := time.Now()
 		_, err := s.cri.PullImage(context.WithoutCancel(ctx), &runtime.PullImageRequest{Image: &runtime.ImageSpec{Image: ref}})

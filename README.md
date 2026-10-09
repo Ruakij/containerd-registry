@@ -80,6 +80,7 @@ http:
   tls: {cert: ..., key: ...}   # optional
 proxy:
   default: docker.io       # upstream of requests that name none
+  notFoundTTL: 10s         # how long a ref upstream does not have answers 404 without asking again
   registries:              # allowed upstreams
     docker.io: {}
     ghcr.io: {}
@@ -99,7 +100,9 @@ upstreams belong in the registry config of the node.
 2. A tag is looked up as image `<upstream>/<name>:<tag>` in the `k8s.io`
    namespace, a digest in the content store. Its bytes are served unchanged and
    checked against the digest.
-3. A miss is pulled with the CRI `PullImage`, and looked up again.
+3. A miss is pulled with the CRI `PullImage`, and looked up again. A ref
+   upstream lacked within `proxy.notFoundTTL`, and the attestation manifests
+   listed in served indexes, answer 404 without a pull.
 4. Blobs are read from the content store; they arrived with their manifest.
 
 ## Development
