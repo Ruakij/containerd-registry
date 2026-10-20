@@ -1,13 +1,13 @@
 module github.com/Ruakij/containerd-registry
 
-go 1.27.2
+go 1.27.3
 
 require (
-	github.com/containerd/containerd/v2 v2.4.1
+	github.com/containerd/containerd/v2 v2.4.2
 	github.com/containerd/errdefs v1.0.0
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
-	golang.org/x/sync v0.23.0
+	golang.org/x/sync v0.24.0
 	google.golang.org/grpc v1.84.0
 	k8s.io/cri-api v0.37.1
 	sigs.k8s.io/yaml v1.6.0
