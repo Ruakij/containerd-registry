@@ -9,7 +9,7 @@ require (
 	github.com/opencontainers/image-spec v1.1.1
 	golang.org/x/sync v0.24.0
 	google.golang.org/grpc v1.85.0
-	k8s.io/cri-api v0.37.1
+	k8s.io/cri-api v0.37.2
 	sigs.k8s.io/yaml v1.6.0
 )
 
